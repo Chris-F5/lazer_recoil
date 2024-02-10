@@ -42,17 +42,184 @@ clear:
 	pop ax
 	ret
 
+reflect_theta:
+	push bp
+	mov bp, sp
+	; [bp+6] theta
+	; [bp+4] normal
+	push ax
+	push bx
+	push cx
+
+	mov ax, [bp+4]
+	add ax, ax ; ax = normal * 2
+	add ax, 256
+	add ax, 256
+	add ax, 256
+	mov bx, [bp+6]
+	add bx, 128
+	sub ax, bx ; ax = normal*2 - theta
+
+_theta_over:
+	sub ax, 256
+	cmp ax, 255
+	jg _theta_over
+
+	mov [bp+6], ax
+
+	pop cx
+	pop bx
+	pop ax
+	pop bp
+	ret
+
+intersect_wall:
+	push bp
+	mov bp, sp
+	; [bp+8] x
+	; [bp+6] y
+	; [bp+4] wall ptr
+	sub sp, 14
+	; [bp- 2] x0
+	; [bp- 4] x1
+	; [bp- 6] y0
+	; [bp- 8] y1
+	; [bp-10] xc
+	; [bp-12] yc
+	; [bp-14] c
+	push ax
+	push bx
+	push cx
+
+	mov bx, [bp+4]
+	mov ax, [bx]
+	mov [bp-2], ax ; x0
+	add bx, 2
+	mov ax, [bx]
+	mov [bp-4], ax ; x1
+	add bx, 2
+	mov ax, [bx]
+	mov [bp-6], ax ; y0
+	add bx, 2
+	mov ax, [bx]
+	mov [bp-8], ax ; y1
+	add bx, 2
+	mov ax, [bx]
+	mov [bp-10], ax ; xc
+	add bx, 2
+	mov ax, [bx]
+	mov [bp-12], ax ; yc
+	add bx, 2
+	mov ax, [bx]
+	mov [bp-14], ax ; c
+	add bx, 2
+	mov dx, [bx] ; normal
+	mov ax, [bp+8] ; x
+	mov bx, [bp-2] ; x0
+	cmp ax, bx
+	jl _wall_miss
+	mov bx, [bp-4] ; x1
+	cmp ax, bx
+	jg _wall_miss
+	mov ax, [bp+6] ; y
+	mov bx, [bp-6] ; y0
+	cmp ax, bx
+	jl _wall_miss
+	mov bx, [bp-8] ; y1
+	cmp ax, bx
+	jg _wall_miss
+
+
+	push dx
+	mov ax, [bp+8] ; x
+	mov bx, [bp-10] ; xc
+	mul bx
+	mov cx, ax
+	mov ax, [bp+6] ; y
+	mov bx, [bp-12] ; yc
+	mul bx
+	add ax, cx
+	mov bx, [bp-14] ; c
+	cmp ax, bx
+	pop dx
+	jg _wall_miss
+	jmp _wall_hit
+
+_wall_miss:
+	mov dx, 256
+_wall_hit:
+	pop cx
+	pop bx
+	pop ax
+	add sp, 14
+	pop bp
+	ret
+
+intersection_test: ; new point -> dx=normal? (>255 NULL)
+	push bp
+	mov bp, sp
+	; [bp+4] new screen coord
+	sub sp, 4
+	; [bp-2] newx
+	; [bp-4] newy
+	push ax
+	push bx
+	push cx
+
+
+	mov ax, [bp+4] ; new screen coord
+	shr ax, 6
+	mov cl, 5
+	div cl
+	mov ah, 0
+	mov cx, ax ; ax = cx = newy
+	mov bx, 5
+	mul bx
+	shl ax, 6
+	mov bx, [bp+4]
+	sub bx, ax ; bx = newx
+	mov [bp-2], bx ; newx
+	mov [bp-4], cx ; newy
+
+	mov cx, 0
+_next_wall:
+	mov bx, walls
+	add bx, cx
+
+	mov ax, [bp-2] ; newx
+	push ax
+	mov ax, [bp-4] ; newy
+	push ax
+	push bx
+	call intersect_wall
+	add sp, 6
+	cmp dx, 256
+	jl _hit
+
+	add cx, 16
+	cmp cx, 16*5 ; wall count
+	jne _next_wall
+
+_no_hit:
+	mov dx, 256
+_hit:
+	pop cx
+	pop bx
+	pop ax
+	add sp, 4
+	pop bp
+	ret
+
 draw_line:
 	push bp
 	mov bp, sp
-	; [bp+8] distance 64=1px
-	; [bp+6] theta 0-255
-	; [bp+4] screen coord start
+	; [bp+6] theta 0-255        -> reflected theta
+	; [bp+4] screen coord start -> hit point
 	sub sp, 8
 	; [bp-2] step
 	; [bp-4] stepextra
 	; [bp-6] stepdelta
-	; [bp-8] stepdistance
+	; [bp-8] distance
 	push ax
 	push bx
 	push cx
@@ -67,10 +234,6 @@ draw_line:
 	add bx, ax
 	mov cx, [bx]
 	mov [bp-6], cx ; stepdelta
-	mov bx, stepdistance
-	add bx, ax
-	mov cx, [bx]
-	mov [bp-8], cx ; stepdistance
 
 	shr ax, 6
 	shl ax, 1
@@ -88,9 +251,11 @@ draw_line:
 	mov ax, [bp+4] ; screen coord
 	mov cx, [bp-6] ; stepdelta
 	shr cx, 1
+	mov dx, 0
+	mov [bp-8], dx
 _next_pix:
 	; draw this pix
-	mov dl, 7 ; color
+	mov dl, 40 ; color
 	mov bx, ax
 	mov [es:bx], dl
 	; increment t
@@ -107,14 +272,30 @@ _skip_stepextra:
 	; step
 	mov bx, [bp-2] ; step
 	add ax, bx
-	; subtract distance
-	mov bx, [bp+8] ; distance
-	mov dx, [bp-8] ; stepdistance
-	sub bx, dx
-	;sub bx, 1
-	mov [bp+8], bx ; distance
-	cmp bx, 0
+
+	mov dx, [bp-8] ; distance
+	inc dx
+	mov [bp-8], dx ; distance
+	cmp dx, 4
+	jl _next_pix
+
+	push ax
+	call intersection_test ; dx = normal?
+	add sp, 2
+	cmp dx, 255
 	jg _next_pix
+
+	mov [bp+4], ax ; return hit point
+	; dx is normal
+	;mov ax, dx
+	;call draw_point
+	mov ax, [bp+6] ; theta
+	push ax
+	push dx ; normal
+	call reflect_theta
+	add sp, 2
+	pop ax
+	mov [bp+6], ax ; return reflected theta
 
 	pop es
 	pop cx
@@ -124,16 +305,46 @@ _skip_stepextra:
 	pop bp
 	ret
 
+draw_simple_line:
+	push bp
+	mov bp, sp
+	; [bp+4] simple line pointer
+	push ax
+	push bx
+	push cx
+	push es
+	mov es, [back_buffer_segment]
+
+	mov bx, [bp+4]
+	mov ax, [bx] ; start point
+	add bx, 2
+	mov dx, [bx] ; step
+	add bx, 2
+	mov cx, [bx] ; count
+	mov bx, ax ; point
+
+	mov al, 11
+	mov [es:bx], al
+_simple_line_loop:
+	add bx, dx
+	dec cx
+	mov [es:bx], al
+	cmp cx, 0
+	jne _simple_line_loop
+
+	pop es
+	pop cx
+	pop bx
+	pop ax
+	pop bp
+	ret
+
 draw_point:
+	push ax
 	push bx
 	push es
 
 	mov es, [back_buffer_segment]
-	;mov ax, 10 ; y
-	;mov bx, 320
-	;mul bx
-	;add ax, 50 ; x
-	;mov ax, [stepdelta]
 	mov bx, 0
 	add bx, ax
 	mov al, 7 ; color
@@ -141,6 +352,31 @@ draw_point:
 
 	pop es
 	pop bx
+	pop ax
+	ret
+
+draw_sprites:
+	push bp
+	mov bp, sp
+	push ax
+	push bx
+	push cx
+
+	mov cx, 0
+_next_sls:
+	mov bx, simple_line_sprites
+	add bx, cx
+	push bx
+	call draw_simple_line
+	add sp, 2
+	add cx, 6
+	cmp cx, 6*5 ; simple line sprites count
+	jne _next_sls
+
+	pop cx
+	pop bx
+	pop ax
+	pop bp
 	ret
 
 blit:
@@ -164,264 +400,6 @@ blit:
 	pop cx
 	pop ax
 	ret
-
-;distance_to_line:
-;	push bp
-;	mov bp, sp
-;	; [bp+14] x
-;	; [bp+12] y
-;	; [bp+10] x0
-;	; [bp+8]  y0
-;	; [bp+6]  nx
-;	; [bp+4]  ny
-;	push bx
-;	push cx
-;
-;	mov ax, [bp+10] ; x0
-;	mov bx, [bp+14] ; x
-;	sub ax, bx ; ax = x0 - x
-;	;mov bx, ax
-;	;sar bx, 15
-;	;xor ax, bx
-;	;sub ax, bx ; ax = (ax ^ (ax >> 15)) - (ax >> 15)
-;	mov [bp+10], ax ; x0 = x0 - x
-;	mov ax, [bp+8] ; y0
-;	mov bx, [bp+12] ; y
-;	sub ax, bx
-;	;mov bx, ax
-;	;sar bx, 15
-;	;xor ax, bx
-;	;sub ax, bx ; ax = (ax ^ (ax >> 15)) - (ax >> 15)
-;	mov [bp+8], ax ; y0 = y0 - y
-;
-;	mov ax, [bp+6] ; nx
-;	mov bx, [bp+10] ; x0
-;	mul bx
-;	mov cx, ax ; cx = nx * x0
-;	mov ax, [bp+4] ; ny
-;	mov bx, [bp+8] ; y0
-;	mul bx
-;	add ax, cx ; ax = nx*x0 + ny*y0
-;
-;	pop cx
-;	pop bx
-;	pop bp
-;	ret
-;
-;ray_intersect:
-;	push bp
-;	mov bp, sp
-;	; [bp+8] x
-;	; [bp+6] y
-;	; [bp+4] theta
-;	sub sp, 4
-;	; [bp-2] perpendicular to line
-;	; [bp-4] parallel to line
-;	push ax
-;	push bx
-;	push cx
-;
-;	mov ax, [bp+8] ; x
-;	push ax
-;	mov ax, [bp+6] ; y
-;	push ax
-;	mov ax, [walls] ; x0
-;	push ax
-;	mov ax, [walls+2] ; y0
-;	push ax
-;	mov ax, [walls+4] ; nx
-;	push ax
-;	mov ax, [walls+6] ; ny
-;	push ax
-;	call distance_to_line
-;	;mov bx, ax
-;	;sar bx, 15
-;	;xor ax, bx
-;	;sub ax, bx ; ax = (ax ^ (ax >> 15)) - (ax >> 15)
-;	mov [bp-2], ax ; perpendicular to line
-;	add sp, 12
-;	call draw_point
-;
-;	mov ax, [bp+8] ; x
-;	push ax
-;	mov ax, [bp+6] ; y
-;	push ax
-;	mov ax, [walls] ; x0
-;	push ax
-;	mov ax, [walls+2] ; y0
-;	push ax
-;	mov ax, [walls+8] ; px
-;	push ax
-;	mov ax, [walls+10] ; py
-;	push ax
-;	call distance_to_line
-;	mov [bp-4], ax ; parallel to line
-;	add sp, 12
-;	call draw_point
-;
-;	mov ax, [walls+12] ; line theta
-;	mov bx, [bp+4] ; theta
-;	sub ax, bx ; al = line_theta - theta
-;;	mov bl, al
-;;	sar bl, 7
-;;	xor al, bl
-;;	sub al, bl ; al = |al|
-;;	mov ah, 0
-;;	mov dl, bl ; dl is now the theta sign bit
-;;
-;;	cmp ax, 55
-;;	jl _in_direction
-;;	mov ax, 0
-;;	jmp _intersect_no_hit
-;;_in_direction:
-;;	; ax is now the theta delta
-;;	jmp _intersect_no_hit ; TMP
-;;
-;;	mov bx, tan
-;;	add bx, ax
-;;	mov ax, [bx] ; ax = tan(theta delta)
-;;	mov bx, [bp-2] ; perpendicular to line
-;;	shl bx, 5
-;;	mul bx
-;;	shl ax, 1 ; ax = perpendicular*tan(theta delta)
-;;
-;;
-;;	mov bx, [bp-4] ; parallel to line
-;;
-;;	mov bx, [bp-4] ; paralell to line
-;;	cmp dl, 0
-;;	je _pos_theta_delta
-;;	sub bx, ax
-;;	jmp _end_theta_delta
-;;_pos_theta_delta:
-;;	add bx, ax
-;;_end_theta_delta:
-;;	; bx is now paralell distance from x0,y0
-;;	mov ax, bx
-;;	sar bx, 15
-;;	xor ax, bx
-;;	sub ax, bx ; bx = abs(bx)
-;;
-;;	;mov ax, 0
-;;	;cmp bx, 1280
-;;	;jl _intersect_no_hit
-;;	;mov ax, 1
-;_intersect_no_hit:
-;	pop cx
-;	pop bx
-;	pop ax
-;	add sp, 4
-;	pop bp
-;	ret
-
-ray_intersect:
-	push bp
-	mov bp, sp
-	; [bp+14] sx ; ray
-	; [bp+12] sy
-	; [bp+10] rtheta
-	; [bp+ 8] ax ; line
-	; [bp+ 6] ay
-	; [bp+ 4] dtheta
-	sub sp, 8
-	; [bp-2] rx
-	; [bp-4] ry
-	; [bp-6] dx
-	; [bp-8] dy
-	push ax
-	push bx
-	push cx
-
-	; set rx, ry, dx, dy
-	mov ax, [bp+10] ; rtheta
-	shl ax, 1
-	mov bx, cos
-	add bx, ax
-	mov cx, [bx]
-	mov [bp-2], cx ; rx
-	mov bx, sin
-	add bx, ax
-	mov cx, [bx]
-	mov [bp-4], cx ; ry
-	mov ax, [bp+4] ; dtheta
-	shl ax, 1
-	mov bx, cos
-	add bx, ax
-	mov cx, [bx]
-	mov [bp-6], cx ; dx
-	mov bx, sin
-	add bx, ax
-	mov cx, [bx]
-	mov [bp-8], cx ; dy
-
-	; set ux, uy
-	mov ax, [bp+8] ; ax
-	mov bx, [bp+14] ; sx
-	sub ax, bx
-	mov [bp+8], ax ; ax = ux
-	mov ax, [bp+6] ; ay
-	mov bx, [bp+12] ; sy
-	sub ax, bx
-	mov [bp+6], ax ; ay = uy
-
-	; denominator
-	mov ax, [bp-6] ; dx
-	mov bx, [bp-4] ; ry
-	mul bx
-	mov cx, ax
-	mov ax, [bp-8] ; dy
-	mov bx, [bp-2] ; rx
-	mul bx
-	add cx, ax ; cx = denominator (<256)
-
-	; lambda numerator
-	mov ax, [bp-2] ; rx
-	mov bx, [bp+6] ; uy
-	mul bx
-	mov dx, ax
-	mov ax, [bp-4] ; ry
-	mov bx, [bp+8] ; ux
-	mul bx
-	mov bx, -1
-	mul bx
-	add dx, ax ; dx = lambda numerator
-
-	cmp cl, 0
-	je _no_intersect
-
-	div cl ; ax = lambda
-	jmp _intersect ; tmp
-	cmp ax, 0
-	jl _no_intersect
-	cmp ax, 128
-	jg _no_intersect
-
-	; t numerator
-	mov ax, [bp-6] ; dx
-	mov bx, [bp+6] ; uy
-	mul bx
-	mov dx, ax
-	mov ax, [bp-8] ; dy
-	mov bx, [bp+8] ; ux
-	mul bx
-	mov bx, -1
-	mul bx
-	add dx, ax ; dx = t numerator
-
-	div cl ; ax = t
-	shr ax, 2
-	jmp _intersect
-_no_intersect:
-	mov ax, 0
-_intersect:
-	call draw_point
-	pop cx
-	pop bx
-	pop ax
-	add sp, 8
-	pop bp
-	ret
-
 
 kb_irqh:
 	cli
@@ -495,21 +473,15 @@ start:
 	mov cx, 0
 _game_loop:
 	call clear
+	call draw_sprites
 	;call draw_point
-	push 6200 ; distance
 	push cx ; theta
 	push 32160 ; screen coord
 	call draw_line
-	add sp, 6
-
-	push 160 ; sx ; ray
-	push 100 ; sy
-	push cx  ; rtheta
-	push 0  ; ax ; line
-	push 0  ; ay
-	push 0  ; dtheta
-	call ray_intersect
-	sub sp, 12
+	call draw_line
+	call draw_line
+	call draw_line
+	add sp, 4
 
 	call vsync
 	call blit
@@ -543,12 +515,22 @@ back_buffer_segment: dw 0
 step: dw 1, 320, 320, -1, -1, -320, -320, 1
 stepextra: dw 320, 1, -1, 320, -320, -1, 1, -320
 stepdelta: dw 0, 6, 12, 18, 25, 31, 37, 44, 50, 57, 63, 70, 77, 84, 91, 98, 105, 113, 120, 128, 136, 144, 152, 161, 170, 179, 189, 199, 209, 219, 231, 242, 255, 242, 231, 219, 209, 199, 189, 179, 170, 161, 152, 144, 136, 128, 120, 113, 105, 98, 91, 84, 77, 70, 63, 57, 50, 44, 37, 31, 25, 18, 12, 6, 0, 6, 12, 18, 25, 31, 37, 44, 50, 57, 63, 70, 77, 84, 91, 98, 105, 113, 120, 128, 136, 144, 152, 161, 170, 179, 189, 199, 209, 219, 231, 242, 255, 242, 231, 219, 209, 199, 189, 179, 170, 161, 152, 144, 136, 128, 120, 113, 105, 98, 91, 84, 77, 70, 63, 57, 50, 44, 37, 31, 25, 18, 12, 6, 0, 6, 12, 18, 25, 31, 37, 44, 50, 57, 63, 70, 77, 84, 91, 98, 105, 113, 120, 128, 136, 144, 152, 161, 170, 179, 189, 199, 209, 219, 231, 242, 255, 242, 231, 219, 209, 199, 189, 179, 170, 161, 152, 144, 136, 128, 120, 113, 105, 98, 91, 84, 77, 70, 63, 57, 50, 44, 37, 31, 25, 18, 12, 6, 0, 6, 12, 18, 25, 31, 37, 44, 50, 57, 63, 70, 77, 84, 91, 98, 105, 113, 120, 128, 136, 144, 152, 161, 170, 179, 189, 199, 209, 219, 231, 242, 255, 242, 231, 219, 209, 199, 189, 179, 170, 161, 152, 144, 136, 128, 120, 113, 105, 98, 91, 84, 77, 70, 63, 57, 50, 44, 37, 31, 25, 18, 12, 6
-stepdistance: dw 64, 64, 64, 64, 64, 64, 64, 64, 65, 65, 65, 66, 66, 67, 67, 68, 69, 70, 70, 71, 72, 73, 74, 75, 76, 78, 79, 81, 82, 84, 86, 88, 90, 88, 86, 84, 82, 81, 79, 78, 76, 75, 74, 73, 72, 71, 70, 70, 69, 68, 67, 67, 66, 66, 65, 65, 65, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 65, 65, 65, 66, 66, 67, 67, 68, 69, 70, 70, 71, 72, 73, 74, 75, 76, 78, 79, 81, 82, 84, 86, 88, 90, 88, 86, 84, 82, 81, 79, 78, 76, 75, 74, 73, 72, 71, 70, 70, 69, 68, 67, 67, 66, 66, 65, 65, 65, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 65, 65, 65, 66, 66, 67, 67, 68, 69, 70, 70, 71, 72, 73, 74, 75, 76, 78, 79, 81, 82, 84, 86, 88, 90, 88, 86, 84, 82, 81, 79, 78, 76, 75, 74, 73, 72, 71, 70, 70, 69, 68, 67, 67, 66, 66, 65, 65, 65, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 65, 65, 65, 66, 66, 67, 67, 68, 69, 70, 70, 71, 72, 73, 74, 75, 76, 78, 79, 81, 82, 84, 86, 88, 90, 88, 86, 84, 82, 81, 79, 78, 76, 75, 74, 73, 72, 71, 70, 70, 69, 68, 67, 67, 66, 66, 65, 65, 65, 64, 64, 64, 64, 64, 64, 64
 
 ;tan: dw 0, 1, 3, 4, 6, 7, 9, 11, 12, 14, 16, 17, 19, 21, 22, 24, 26, 28, 30, 32, 34, 36, 38, 40, 42, 45, 47, 49, 52, 55, 58, 60, 64, 67, 70, 74, 77, 82, 86, 90, 95, 101, 106, 112, 119, 127, 135, 144, 154, 165, 178, 193, 210, 231, 255
 cos: dw 11, 11, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 9, 9, 9, 9, 9, 9, 9, 9, 8, 8, 8, 8, 8, 7, 7, 7, 7, 7, 6, 6, 6, 6, 6, 5, 5, 5, 5, 4, 4, 4, 4, 3, 3, 3, 3, 2, 2, 2, 2, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, -1, -1, -1, -1, -2, -2, -2, -2, -3, -3, -3, -3, -4, -4, -4, -4, -5, -5, -5, -5, -6, -6, -6, -6, -6, -7, -7, -7, -7, -7, -8, -8, -8, -8, -8, -8, -9, -9, -9, -9, -9, -9, -9, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -9, -9, -9, -9, -9, -9, -9, -8, -8, -8, -8, -8, -8, -7, -7, -7, -7, -7, -6, -6, -6, -6, -6, -5, -5, -5, -5, -4, -4, -4, -4, -3, -3, -3, -3, -2, -2, -2, -2, -1, -1, -1, -1, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 6, 6, 6, 6, 6, 7, 7, 7, 7, 7, 8, 8, 8, 8, 8, 9, 9, 9, 9, 9, 9, 9, 9, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 11
 sin: dw 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 6, 6, 6, 6, 6, 7, 7, 7, 7, 7, 8, 8, 8, 8, 8, 9, 9, 9, 9, 9, 9, 9, 9, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 11, 11, 11, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 9, 9, 9, 9, 9, 9, 9, 9, 8, 8, 8, 8, 8, 7, 7, 7, 7, 7, 6, 6, 6, 6, 6, 5, 5, 5, 5, 4, 4, 4, 4, 3, 3, 3, 3, 2, 2, 2, 2, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, -1, -1, -1, -1, -2, -2, -2, -2, -3, -3, -3, -3, -4, -4, -4, -4, -5, -5, -5, -5, -6, -6, -6, -6, -6, -7, -7, -7, -7, -7, -8, -8, -8, -8, -8, -8, -9, -9, -9, -9, -9, -9, -9, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -9, -9, -9, -9, -9, -9, -9, -8, -8, -8, -8, -8, -8, -7, -7, -7, -7, -7, -6, -6, -6, -6, -6, -5, -5, -5, -5, -4, -4, -4, -4, -3, -3, -3, -3, -2, -2, -2, -2, -1, -1, -1, -1, 0, 0, 0
 
 
-; x0, y0, nx, ny, px, py, normal
-walls: dw 100, 50, -15, 62, 62, 15, 74
+;	x0,  x1,  y0,  y1,  xc, yc, c,   normal
+walls: dw \
+	0,   5,   0,   200, 1,  0,  5,    0, \
+	315, 320, 0,   200, -1, 0,  -315, 128, \
+	0,   320, 0,   5,   0,  1,  5,    64, \
+	0,   320, 195, 200, 0,  -1, -195, 192, \
+	0,   150, 0,   150, 1,  1,  150,  32
+simple_line_sprites: dw \
+	320*5+5, 320, 190, \
+	320*5+315, 320, 190, \
+	320*5+5, 1, 310, \
+	320*195+5, 1, 310, \
+	150, 319, 150
