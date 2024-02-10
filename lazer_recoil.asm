@@ -379,6 +379,83 @@ _next_sls:
 	pop bp
 	ret
 
+handle_move_input:
+	push ax
+	push bx
+	push cx
+
+	mov ax, [kb]
+	test ax, 0002h ; right key
+	jz _after_right
+	mov ax, [player_rotation]
+	add ax, 4
+	mov [player_rotation], ax
+_after_right:
+	mov ax, [kb]
+	test ax, 0004h ; left key
+	jz _after_left
+	mov ax, [player_rotation]
+	add ax, -4
+	mov [player_rotation], ax
+_after_left:
+
+	mov ax, [player_rotation]
+	add ax, 256
+	add ax, 256
+_input_theta_over:
+	sub ax, 256
+	cmp ax, 255
+	jg _input_theta_over
+	mov [player_rotation], ax
+
+	pop cx
+	pop bx
+	pop ax
+	ret
+
+draw_player:
+	push ax
+	push bx
+	push cx
+
+	mov ax, [player_position+2]
+	mov bx, 320
+	mul bx
+	mov bx, [player_position]
+	add ax, bx
+	call draw_point
+	add ax, 1
+	call draw_point
+	add ax, -2
+	call draw_point
+	add ax, -319
+	call draw_point
+	add ax, 640
+	call draw_point
+
+	mov ax, [player_rotation]
+	shl ax, 1
+	mov bx, cos
+	add bx, ax
+	mov cx, [bx]
+	mov bx, sin
+	add bx, ax
+	mov dx, [bx]
+	; cx = x, dx = y
+
+	mov ax, [player_position+2]
+	add ax, dx
+	mov bx, 320
+	mul bx
+	add ax, [player_position]
+	add ax, cx
+	call draw_point
+
+	pop cx
+	pop bx
+	pop ax
+	ret
+
 blit:
 	push ax
 	push cx
@@ -401,14 +478,82 @@ blit:
 	pop ax
 	ret
 
-kb_irqh:
-	cli
+;kb_irqh:
+;	cli
+;	push ax
+;	push bx
+;
+;
+;	in al, 60h ; keyboard port
+;
+;	; handle scan code
+;	mov bl, 10h ; 'q' make scan code
+;	cmp al, 10h
+;	je _kb_q_make
+;	mov bl, 4dh ; 'right' make scan code
+;	cmp al, bl
+;	je _kb_right_make
+;	mov bl, 0cdh ; 'right' break scan code
+;	cmp al, bl
+;	je _kb_right_break
+;	mov bl, 4bh ; 'left' make scan code
+;	cmp al, bl
+;	je _kb_left_make
+;	mov bl, 0cbh ; 'left' break scan code
+;	cmp al, bl
+;	je _kb_left_break
+;	mov bl, 39h ; 'space' make scan code
+;	cmp al, bl
+;	je _kb_space_make
+;	jmp _kb_fallthrough
+;_kb_q_make:
+;	mov bx, 0001h
+;	or [kb], bx
+;	jmp _kb_fallthrough
+;_kb_right_make:
+;	mov bx, 0002h
+;	or [kb], bx
+;	jmp _kb_fallthrough
+;_kb_right_break:
+;	mov bx, ~0002h
+;	and [kb], bx
+;	jmp _kb_fallthrough
+;_kb_left_make:
+;	mov bx, 0004h
+;	or [kb], bx
+;	jmp _kb_fallthrough
+;_kb_left_break:
+;	mov bx, ~0004h
+;	and [kb], bx
+;	jmp _kb_fallthrough
+;_kb_space_make:
+;	mov bx, 0008h
+;	or [kb], bx
+;	jmp _kb_fallthrough
+;_kb_fallthrough:
+;
+;	; acknoledge scancode
+;	in al, 61h
+;	or al, 80h ; dissable keyboard
+;	out 61h, al
+;	and al, 7fh ; enable keyboard
+;	out 61h, al
+;
+;	; send end of interrupt signal
+;	mov ax, 20h
+;	out 20h, ax
+;
+;	pop bx
+;	pop ax
+;	sti
+;	iret
+
+eat_keyboard_input:
 	push ax
 	push bx
-
+	push cx
 
 	in al, 60h ; keyboard port
-
 	; handle scan code
 	mov bl, 10h ; 'q' make scan code
 	cmp al, 10h
@@ -419,6 +564,15 @@ kb_irqh:
 	mov bl, 0cdh ; 'right' break scan code
 	cmp al, bl
 	je _kb_right_break
+	mov bl, 4bh ; 'left' make scan code
+	cmp al, bl
+	je _kb_left_make
+	mov bl, 0cbh ; 'left' break scan code
+	cmp al, bl
+	je _kb_left_break
+	mov bl, 39h ; 'space' make scan code
+	cmp al, bl
+	je _kb_space_make
 	jmp _kb_fallthrough
 _kb_q_make:
 	mov bx, 0001h
@@ -431,56 +585,65 @@ _kb_right_make:
 _kb_right_break:
 	mov bx, ~0002h
 	and [kb], bx
+	jmp _kb_fallthrough
+_kb_left_make:
+	mov bx, 0004h
+	or [kb], bx
+	jmp _kb_fallthrough
+_kb_left_break:
+	mov bx, ~0004h
+	and [kb], bx
+	jmp _kb_fallthrough
+_kb_space_make:
+	mov bx, 0008h
+	or [kb], bx
+	jmp _kb_fallthrough
 _kb_fallthrough:
 
-	; acknoledge scancode
-	in al, 61h
-	or al, 80h ; dissable keyboard
-	out 61h, al
-	and al, 7fh ; enable keyboard
-	out 61h, al
-
-	; send end of interrupt signal
-	mov ax, 20h
-	out 20h, ax
-
+	pop cx
 	pop bx
 	pop ax
-	sti
-	iret
+	ret
 
 start:
 	; enter 13h vga mode
 	mov ax, 0013h
 	int 10h
 
-	; save old keyboard interrupt request handler
-	push es
-	mov ax, 3509h ; get kb irq
-	int 21h
-	mov [old_kb_irqh], es
-	mov [old_kb_irqh+2], bx
-	pop es
-	; set kb interrupt vector
-	push ds
-	mov ax, 2509h ; set kb irq
-	push cs
-	pop ds
-	mov dx, kb_irqh
-	int 21h
-	pop ds
+;	; save old keyboard interrupt request handler
+;	push es
+;	mov ax, 3509h ; get kb irq
+;	int 21h
+;	mov [old_kb_irqh], es
+;	mov [old_kb_irqh+2], bx
+;	pop es
+;	; set kb interrupt vector
+;	push ds
+;	mov ax, 2509h ; set kb irq
+;	push cs
+;	pop ds
+;	mov dx, kb_irqh
+;	int 21h
+;	pop ds
 
 	mov cx, 0
 _game_loop:
+	call eat_keyboard_input
 	call clear
 	call draw_sprites
-	;call draw_point
-	push cx ; theta
-	push 32160 ; screen coord
-	call draw_line
-	call draw_line
-	call draw_line
-	call draw_line
+	call handle_move_input
+	call draw_player
+
+	mov ax, [player_rotation]
+	push ax ; theta
+	mov ax, [player_position+2]
+	mov bx, 320
+	mul bx
+	mov bx, [player_position]
+	add ax, bx
+	push ax ; screen coord
+	;call draw_line
+	;call draw_line
 	add sp, 4
 
 	call vsync
@@ -493,13 +656,13 @@ _game_loop:
 	test ax, 0001h
 	jz _game_loop
 
-	; restore keyboard interrupt vector
-	push ds
-	mov ax, 2509h; set kb irq
-	mov dx, [old_kb_irqh+2]
-	mov ds, [old_kb_irqh]
-	int 21h
-	pop ds
+;	; restore keyboard interrupt vector
+;	push ds
+;	mov ax, 2509h; set kb irq
+;	mov dx, [old_kb_irqh+2]
+;	mov ds, [old_kb_irqh]
+;	int 21h
+;	pop ds
 
 	; return to text mode
 	mov ax, 0003h
@@ -509,17 +672,15 @@ _game_loop:
 	int 21h
 
 section .data
-old_kb_irqh: dw 0, 0
+;old_kb_irqh: dw 0, 0
 kb: dw 0
 back_buffer_segment: dw 0
 step: dw 1, 320, 320, -1, -1, -320, -320, 1
 stepextra: dw 320, 1, -1, 320, -320, -1, 1, -320
 stepdelta: dw 0, 6, 12, 18, 25, 31, 37, 44, 50, 57, 63, 70, 77, 84, 91, 98, 105, 113, 120, 128, 136, 144, 152, 161, 170, 179, 189, 199, 209, 219, 231, 242, 255, 242, 231, 219, 209, 199, 189, 179, 170, 161, 152, 144, 136, 128, 120, 113, 105, 98, 91, 84, 77, 70, 63, 57, 50, 44, 37, 31, 25, 18, 12, 6, 0, 6, 12, 18, 25, 31, 37, 44, 50, 57, 63, 70, 77, 84, 91, 98, 105, 113, 120, 128, 136, 144, 152, 161, 170, 179, 189, 199, 209, 219, 231, 242, 255, 242, 231, 219, 209, 199, 189, 179, 170, 161, 152, 144, 136, 128, 120, 113, 105, 98, 91, 84, 77, 70, 63, 57, 50, 44, 37, 31, 25, 18, 12, 6, 0, 6, 12, 18, 25, 31, 37, 44, 50, 57, 63, 70, 77, 84, 91, 98, 105, 113, 120, 128, 136, 144, 152, 161, 170, 179, 189, 199, 209, 219, 231, 242, 255, 242, 231, 219, 209, 199, 189, 179, 170, 161, 152, 144, 136, 128, 120, 113, 105, 98, 91, 84, 77, 70, 63, 57, 50, 44, 37, 31, 25, 18, 12, 6, 0, 6, 12, 18, 25, 31, 37, 44, 50, 57, 63, 70, 77, 84, 91, 98, 105, 113, 120, 128, 136, 144, 152, 161, 170, 179, 189, 199, 209, 219, 231, 242, 255, 242, 231, 219, 209, 199, 189, 179, 170, 161, 152, 144, 136, 128, 120, 113, 105, 98, 91, 84, 77, 70, 63, 57, 50, 44, 37, 31, 25, 18, 12, 6
 
-;tan: dw 0, 1, 3, 4, 6, 7, 9, 11, 12, 14, 16, 17, 19, 21, 22, 24, 26, 28, 30, 32, 34, 36, 38, 40, 42, 45, 47, 49, 52, 55, 58, 60, 64, 67, 70, 74, 77, 82, 86, 90, 95, 101, 106, 112, 119, 127, 135, 144, 154, 165, 178, 193, 210, 231, 255
 cos: dw 11, 11, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 9, 9, 9, 9, 9, 9, 9, 9, 8, 8, 8, 8, 8, 7, 7, 7, 7, 7, 6, 6, 6, 6, 6, 5, 5, 5, 5, 4, 4, 4, 4, 3, 3, 3, 3, 2, 2, 2, 2, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, -1, -1, -1, -1, -2, -2, -2, -2, -3, -3, -3, -3, -4, -4, -4, -4, -5, -5, -5, -5, -6, -6, -6, -6, -6, -7, -7, -7, -7, -7, -8, -8, -8, -8, -8, -8, -9, -9, -9, -9, -9, -9, -9, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -9, -9, -9, -9, -9, -9, -9, -8, -8, -8, -8, -8, -8, -7, -7, -7, -7, -7, -6, -6, -6, -6, -6, -5, -5, -5, -5, -4, -4, -4, -4, -3, -3, -3, -3, -2, -2, -2, -2, -1, -1, -1, -1, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 6, 6, 6, 6, 6, 7, 7, 7, 7, 7, 8, 8, 8, 8, 8, 9, 9, 9, 9, 9, 9, 9, 9, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 11
 sin: dw 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 6, 6, 6, 6, 6, 7, 7, 7, 7, 7, 8, 8, 8, 8, 8, 9, 9, 9, 9, 9, 9, 9, 9, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 11, 11, 11, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 9, 9, 9, 9, 9, 9, 9, 9, 8, 8, 8, 8, 8, 7, 7, 7, 7, 7, 6, 6, 6, 6, 6, 5, 5, 5, 5, 4, 4, 4, 4, 3, 3, 3, 3, 2, 2, 2, 2, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, -1, -1, -1, -1, -2, -2, -2, -2, -3, -3, -3, -3, -4, -4, -4, -4, -5, -5, -5, -5, -6, -6, -6, -6, -6, -7, -7, -7, -7, -7, -8, -8, -8, -8, -8, -8, -9, -9, -9, -9, -9, -9, -9, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -10, -9, -9, -9, -9, -9, -9, -9, -8, -8, -8, -8, -8, -8, -7, -7, -7, -7, -7, -6, -6, -6, -6, -6, -5, -5, -5, -5, -4, -4, -4, -4, -3, -3, -3, -3, -2, -2, -2, -2, -1, -1, -1, -1, 0, 0, 0
-
 
 ;	x0,  x1,  y0,  y1,  xc, yc, c,   normal
 walls: dw \
@@ -534,3 +695,7 @@ simple_line_sprites: dw \
 	320*5+5, 1, 310, \
 	320*195+5, 1, 310, \
 	150, 319, 150
+
+player_position: dw 160, 100
+player_vel: dw 0, 0
+player_rotation: dw 0
