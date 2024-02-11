@@ -423,8 +423,6 @@ draw_finish_line:
 	push es
 	mov es, [back_buffer_segment]
 
-
-
 	mov bx, 320*30+220 ; level 1
 	mov cx, 95
 	mov ax, [level]
@@ -758,13 +756,18 @@ _delay_restart_game:
 	dec cx
 	cmp cx, 0
 	jne _delay_restart_game
+
+	mov ax, [death_count]
+	inc ax
+	mov [death_count], ax
+
 _no_restart:
 	pop cx
 	pop bx
 	pop ax
 	ret
 
-check_level_two:
+check_next_level:
 	push ax
 	push bx
 	push cx
@@ -871,6 +874,113 @@ _no_lazer_freeze:
 	pop ax
 	ret
 
+draw_death_count:
+	push bp
+	mov bp, sp
+	push ax
+	push bx
+	push cx
+
+	mov ax, [death_count]
+	mov bl, 10
+	div bl
+	mov cl, ah ; remainder
+	mov dl, al ; quotient
+	mov ch, 0
+	push dx
+	push cx
+	mov ax, 320*180+296
+	push ax
+	call draw_number
+	add sp, 4
+	pop dx
+
+	mov al, dl
+	mov ah, 0
+	push ax
+	mov ax, 320*180+280
+	push ax
+	call draw_number
+	add sp, 4
+
+	pop cx
+	pop bx
+	pop ax
+	pop bp
+	ret
+
+draw_number:
+	push bp
+	mov bp, sp
+	; [bp+6] number
+	; [bp+4] screen coord
+	push ax
+	push bx
+	push cx
+	push es
+	mov ax, [back_buffer_segment]
+	mov es, ax
+
+	mov cx, 0 ; scan line
+_font_next_scan:
+	mov ax, [bp+6] ; number
+	mov bx, 5
+	mul bx
+	mov bx, font
+	add ax, cx
+	add bx, ax
+	mov al, [bx] ; al = scan line
+	test al, 1
+	jz _no_scan_1
+	mov dx, 0707h ; color
+	mov bx, [bp+4]
+	mov [es:bx], dx
+	add bx, 2
+	mov [es:bx], dx
+	add bx, 318
+	mov [es:bx], dx
+	add bx, 2
+	mov [es:bx], dx
+_no_scan_1:
+	test al, 2
+	jz _no_scan_2
+	mov dx, 0707h ; color
+	mov bx, [bp+4]
+	add bx, 4
+	mov [es:bx], dx
+	add bx, 2
+	mov [es:bx], dx
+	add bx, 318
+	mov [es:bx], dx
+	add bx, 2
+	mov [es:bx], dx
+_no_scan_2:
+	test al, 4
+	jz _no_scan_3
+	mov dx, 0707h ; color
+	mov bx, [bp+4]
+	add bx, 8
+	mov [es:bx], dx
+	add bx, 2
+	mov [es:bx], dx
+	add bx, 318
+	mov [es:bx], dx
+	add bx, 2
+	mov [es:bx], dx
+_no_scan_3:
+	mov ax, [bp+4]
+	add ax, 320*2
+	mov [bp+4], ax
+	inc cx
+	cmp cx, 5
+	jne _font_next_scan
+
+	pop es
+	pop cx
+	pop bx
+	pop ax
+	pop bp
+	ret
 
 start:
 	; enter 13h vga mode
@@ -888,12 +998,13 @@ _game_loop:
 	call draw_sprites
 	call draw_player
 	call draw_finish_line
+	call draw_death_count
 
 	call vsync
 	call blit
 	call lazer_freeze
 	call restart_game
-	call check_level_two
+	call check_next_level
 
 	inc cx
 	mov ch, 0
@@ -979,6 +1090,19 @@ simple_line_sprites: dw \
 	320*165+220, -320, 30, \
 	320*135+220, -319, 95
 
+font: db \
+	7, 5, 5, 5, 7, \
+	3, 2, 2, 2, 7, \
+	7, 4, 7, 1, 7, \
+	7, 4, 7, 4, 7, \
+	1, 1, 5, 7, 4, \
+	7, 1, 7, 4, 7, \
+	7, 1, 7, 5, 7, \
+	7, 4, 4, 4, 4, \
+	7, 5, 7, 5, 7, \
+	7, 5, 7, 4, 4
+
+death_count: dw 0
 level: dw 0
 player_start_pos: dw 50*16, 40*16
 player_position: dw 50*16, 40*16
