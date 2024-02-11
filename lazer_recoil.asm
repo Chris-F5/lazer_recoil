@@ -203,10 +203,6 @@ intersect_player:
 	add ax, 2
 	cmp bx, ax
 	jg _no_player_intersection
-
-	mov ax, 0
-	call draw_point
-
 	mov dx, 1
 _no_player_intersection:
 	pop cx
@@ -427,9 +423,16 @@ draw_finish_line:
 	push es
 	mov es, [back_buffer_segment]
 
-	mov al, 48
-	mov bx, 320*40+220
+
+
+	mov bx, 320*30+220 ; level 1
 	mov cx, 95
+	mov ax, [level]
+	cmp ax, 0
+	mov al, 48
+	je _next_finish_line_point
+	mov bx, 320*45+5 ; level 2
+	mov cx, 105
 _next_finish_line_point:
 	mov [es:bx], al
 	inc bx
@@ -446,15 +449,23 @@ _next_finish_line_point:
 draw_point:
 	push ax
 	push bx
+	push cx
 	push es
 
 	mov es, [back_buffer_segment]
 	mov bx, 0
 	add bx, ax
+
 	mov al, 7 ; color
+	mov cx, [level]
+	cmp cx, 0
+	jz _level_one_color
+	mov al, 13
+_level_one_color:
 	mov [es:bx], al
 
 	pop es
+	pop cx
 	pop bx
 	pop ax
 	ret
@@ -753,6 +764,31 @@ _no_restart:
 	pop ax
 	ret
 
+check_level_two:
+	push ax
+	push bx
+	push cx
+
+	mov ax, [player_position]
+	shr ax, 4
+	cmp ax, 220
+	jl _not_level_two
+	mov ax, [player_position+2]
+	shr ax, 4
+	cmp ax, 30
+	jg _not_level_two
+	mov ax, 1
+	mov [level], ax
+	mov ax, 260*16
+	mov [player_start_pos], ax
+	mov ax, 20*16
+	mov [player_start_pos+2], ax
+_not_level_two:
+	pop cx
+	pop bx
+	pop cx
+	ret
+
 shoot_lazer:
 	push ax
 	push bx
@@ -790,6 +826,14 @@ shoot_lazer:
 	call draw_line
 	call draw_line
 	call draw_line
+	mov ax, [level]
+	cmp ax, 0
+	je _no_extra_draw_line
+	call draw_line
+	call draw_line
+	call draw_line
+	call draw_line
+_no_extra_draw_line:
 	add sp, 6
 
 	mov ax, [kb]
@@ -845,11 +889,11 @@ _game_loop:
 	call draw_player
 	call draw_finish_line
 
-
 	call vsync
 	call blit
 	call lazer_freeze
 	call restart_game
+	call check_level_two
 
 	inc cx
 	mov ch, 0
@@ -935,6 +979,7 @@ simple_line_sprites: dw \
 	320*165+220, -320, 30, \
 	320*135+220, -319, 95
 
+level: dw 0
 player_start_pos: dw 50*16, 40*16
 player_position: dw 50*16, 40*16
 player_vel: dw 0, 0
