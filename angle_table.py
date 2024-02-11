@@ -7,8 +7,8 @@ sin_table = "sin: dw "
 
 for i in range(256):
     theta = i/256 * 2 * math.pi
-    cos = int(math.cos(theta) * 11 + 0.01)
-    sin = int(math.sin(theta) * 11 + 0.01)
+    cos = int(math.cos(theta) * 64 + 0.01)
+    sin = int(math.sin(theta) * 64 + 0.01)
     cos_table += f'{cos}'
     sin_table += f'{sin}'
     if i != 255:
